@@ -90,7 +90,7 @@ const MovieGrid = ({ movies, onMovieClick }) => {
   );
 };
 
-const MovieDetail = ({ movie, onClose, onGetRecommendations }) => {
+const MovieDetail = ({ movie, onClose, onGetRecommendations, onGetReviews }) => {
   const backdropUrl = movie.backdrop_path 
     ? `https://image.tmdb.org/t/p/w1280${movie.backdrop_path}`
     : "/api/placeholder/1280/720";
@@ -147,8 +147,11 @@ const MovieDetail = ({ movie, onClose, onGetRecommendations }) => {
                   >
                     Get AI Recommendations
                   </button>
-                  <button className="px-6 py-3 bg-gray-700 text-white rounded-full hover:bg-gray-600 transition-colors duration-200 font-semibold">
-                    Read Reviews
+                  <button
+                    onClick={() => onGetReviews(movie)}
+                    className="px-6 py-3 bg-blue-600 text-white rounded-full hover:bg-blue-700 transition-colors duration-200 font-semibold"
+                  >
+                    Read Reviews & Analysis
                   </button>
                 </div>
               </div>
@@ -161,12 +164,36 @@ const MovieDetail = ({ movie, onClose, onGetRecommendations }) => {
 };
 
 const AIRecommendations = ({ recommendations, onClose }) => {
+  const formatRecommendations = (text) => {
+    // Split by double newlines to get paragraphs
+    const paragraphs = text.split('\n\n').filter(p => p.trim());
+    
+    return paragraphs.map((paragraph, index) => {
+      // Check if it's a movie title (contains year in parentheses)
+      if (paragraph.match(/\([\d]{4}\)/)) {
+        return (
+          <div key={index} className="mb-4 p-4 bg-gray-800/50 rounded-lg">
+            <h3 className="text-xl font-bold text-red-400 mb-2">{paragraph}</h3>
+          </div>
+        );
+      }
+      // Regular paragraph
+      else {
+        return (
+          <div key={index} className="mb-4">
+            <p className="text-gray-300 leading-relaxed">{paragraph}</p>
+          </div>
+        );
+      }
+    });
+  };
+
   return (
     <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 overflow-y-auto">
       <div className="min-h-screen p-6">
         <div className="max-w-4xl mx-auto">
           <div className="flex justify-between items-center mb-8">
-            <h2 className="text-3xl font-bold text-white">AI Recommendations</h2>
+            <h2 className="text-3xl font-bold text-white">🎬 AI Movie Recommendations</h2>
             <button
               onClick={onClose}
               className="text-white hover:text-red-500 transition-colors text-2xl"
@@ -176,14 +203,178 @@ const AIRecommendations = ({ recommendations, onClose }) => {
           </div>
           
           <div className="bg-gray-900/50 backdrop-blur-sm rounded-lg p-6 text-white">
-            <div className="prose prose-invert max-w-none">
-              <div className="whitespace-pre-wrap text-gray-300 leading-relaxed">
-                {recommendations}
-              </div>
+            <div className="space-y-4">
+              {formatRecommendations(recommendations)}
             </div>
           </div>
         </div>
       </div>
+    </div>
+  );
+};
+
+const ReviewsAnalysis = ({ reviews, onClose }) => {
+  const formatReviews = (text) => {
+    // Split by double newlines and format sections
+    const sections = text.split('\n\n').filter(s => s.trim());
+    
+    return sections.map((section, index) => {
+      // Check if it's a numbered list item
+      if (section.match(/^\d+\./)) {
+        return (
+          <div key={index} className="mb-4 p-4 bg-gray-800/50 rounded-lg">
+            <p className="text-gray-300 leading-relaxed">{section}</p>
+          </div>
+        );
+      }
+      // Regular paragraph
+      else {
+        return (
+          <div key={index} className="mb-4">
+            <p className="text-gray-300 leading-relaxed">{section}</p>
+          </div>
+        );
+      }
+    });
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/90 backdrop-blur-sm z-50 overflow-y-auto">
+      <div className="min-h-screen p-6">
+        <div className="max-w-4xl mx-auto">
+          <div className="flex justify-between items-center mb-8">
+            <h2 className="text-3xl font-bold text-white">📝 Reviews & Critical Analysis</h2>
+            <button
+              onClick={onClose}
+              className="text-white hover:text-red-500 transition-colors text-2xl"
+            >
+              ✕
+            </button>
+          </div>
+          
+          <div className="bg-gray-900/50 backdrop-blur-sm rounded-lg p-6 text-white">
+            <div className="space-y-4">
+              {formatReviews(reviews)}
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+const MovieChatbot = ({ isOpen, onClose }) => {
+  const [messages, setMessages] = useState([
+    {
+      type: 'bot',
+      content: "Hi! I'm CineBot, your movie expert assistant! 🎬 Ask me anything about movies, TV shows, or get personalized recommendations!"
+    }
+  ]);
+  const [inputMessage, setInputMessage] = useState("");
+  const [isLoading, setIsLoading] = useState(false);
+
+  const sendMessage = async (message) => {
+    if (!message.trim()) return;
+
+    // Add user message
+    const userMessage = { type: 'user', content: message };
+    setMessages(prev => [...prev, userMessage]);
+    setInputMessage("");
+    setIsLoading(true);
+
+    try {
+      const response = await axios.post(`${API}/chat/movie`, {
+        message: message,
+        context: messages.length > 1 ? messages.slice(-2).map(m => `${m.type}: ${m.content}`).join('\n') : ""
+      });
+
+      const botMessage = { type: 'bot', content: response.data.response };
+      setMessages(prev => [...prev, botMessage]);
+    } catch (error) {
+      console.error("Chat error:", error);
+      const errorMessage = { type: 'bot', content: "Sorry, I'm having trouble responding right now. Please try again!" };
+      setMessages(prev => [...prev, errorMessage]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    sendMessage(inputMessage);
+  };
+
+  if (!isOpen) return null;
+
+  return (
+    <div className="fixed bottom-4 right-4 w-96 h-96 bg-gray-900/95 backdrop-blur-sm rounded-lg shadow-2xl border border-gray-700 z-50 flex flex-col">
+      {/* Header */}
+      <div className="flex items-center justify-between p-4 border-b border-gray-700">
+        <div className="flex items-center gap-2">
+          <div className="w-8 h-8 bg-red-600 rounded-full flex items-center justify-center">
+            🤖
+          </div>
+          <h3 className="text-white font-semibold">CineBot</h3>
+        </div>
+        <button
+          onClick={onClose}
+          className="text-gray-400 hover:text-white transition-colors"
+        >
+          ✕
+        </button>
+      </div>
+
+      {/* Messages */}
+      <div className="flex-1 overflow-y-auto p-4 space-y-3">
+        {messages.map((message, index) => (
+          <div
+            key={index}
+            className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}
+          >
+            <div
+              className={`max-w-xs p-3 rounded-lg ${
+                message.type === 'user'
+                  ? 'bg-red-600 text-white'
+                  : 'bg-gray-700 text-gray-200'
+              }`}
+            >
+              <p className="text-sm leading-relaxed">{message.content}</p>
+            </div>
+          </div>
+        ))}
+        {isLoading && (
+          <div className="flex justify-start">
+            <div className="bg-gray-700 text-gray-200 max-w-xs p-3 rounded-lg">
+              <div className="flex space-x-1">
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.1s'}}></div>
+                <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0.2s'}}></div>
+              </div>
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* Input */}
+      <form onSubmit={handleSubmit} className="p-4 border-t border-gray-700">
+        <div className="flex gap-2">
+          <input
+            type="text"
+            value={inputMessage}
+            onChange={(e) => setInputMessage(e.target.value)}
+            placeholder="Ask me about movies..."
+            className="flex-1 px-3 py-2 bg-gray-800 text-white rounded-lg text-sm focus:outline-none focus:ring-1 focus:ring-red-500"
+            disabled={isLoading}
+          />
+          <button
+            type="submit"
+            disabled={isLoading || !inputMessage.trim()}
+            className="px-4 py-2 bg-red-600 text-white rounded-lg text-sm hover:bg-red-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
+            Send
+          </button>
+        </div>
+      </form>
     </div>
   );
 };
@@ -194,6 +385,9 @@ function App() {
   const [selectedMovie, setSelectedMovie] = useState(null);
   const [recommendations, setRecommendations] = useState("");
   const [showRecommendations, setShowRecommendations] = useState(false);
+  const [reviews, setReviews] = useState("");
+  const [showReviews, setShowReviews] = useState(false);
+  const [showChatbot, setShowChatbot] = useState(false);
   const [error, setError] = useState("");
 
   const searchMovies = async (query) => {
@@ -226,6 +420,23 @@ function App() {
     } catch (error) {
       console.error("Recommendations error:", error);
       setError("Failed to get AI recommendations. Please check if Gemini API key is configured.");
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const getReviews = async (movie) => {
+    setIsLoading(true);
+    try {
+      const response = await axios.post(`${API}/movies/reviews`, {
+        movie_title: movie.title || movie.name,
+        movie_year: (movie.release_date || movie.first_air_date)?.split('-')[0] || ""
+      });
+      setReviews(response.data.reviews_summary);
+      setShowReviews(true);
+    } catch (error) {
+      console.error("Reviews error:", error);
+      setError("Failed to get movie reviews. Please try again.");
     } finally {
       setIsLoading(false);
     }
@@ -314,6 +525,7 @@ function App() {
           movie={selectedMovie}
           onClose={() => setSelectedMovie(null)}
           onGetRecommendations={getRecommendations}
+          onGetReviews={getReviews}
         />
       )}
 
@@ -323,10 +535,33 @@ function App() {
           recommendations={recommendations}
           onClose={() => {
             setShowRecommendations(false);
-            // Don't clear selectedMovie so user returns to movie detail
           }}
         />
       )}
+
+      {/* Reviews Analysis Modal */}
+      {showReviews && (
+        <ReviewsAnalysis
+          reviews={reviews}
+          onClose={() => {
+            setShowReviews(false);
+          }}
+        />
+      )}
+
+      {/* Chatbot */}
+      <MovieChatbot 
+        isOpen={showChatbot}
+        onClose={() => setShowChatbot(false)}
+      />
+
+      {/* Chatbot Toggle Button */}
+      <button
+        onClick={() => setShowChatbot(true)}
+        className={`fixed bottom-4 right-4 w-14 h-14 bg-red-600 text-white rounded-full shadow-lg hover:bg-red-700 transition-all duration-200 flex items-center justify-center text-xl z-40 ${showChatbot ? 'hidden' : 'block'}`}
+      >
+        🤖
+      </button>
     </div>
   );
 }

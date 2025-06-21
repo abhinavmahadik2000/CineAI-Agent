@@ -11,6 +11,9 @@ import uuid
 from datetime import datetime
 import requests
 import asyncio
+import re
+from bs4 import BeautifulSoup
+import json
 
 ROOT_DIR = Path(__file__).parent
 load_dotenv(ROOT_DIR / '.env')
@@ -55,6 +58,33 @@ class RecommendationRequest(BaseModel):
 
 class RecommendationResponse(BaseModel):
     recommendations: str
+
+class ReviewsRequest(BaseModel):
+    movie_title: str
+    movie_year: Optional[str] = ""
+    imdb_id: Optional[str] = ""
+
+class ReviewsResponse(BaseModel):
+    reviews_summary: str
+    total_reviews: int
+    average_rating: Optional[float] = None
+
+class ChatRequest(BaseModel):
+    message: str
+    context: Optional[str] = ""
+
+class ChatResponse(BaseModel):
+    response: str
+
+# Helper function to clean and format AI responses
+def clean_ai_response(text: str) -> str:
+    """Clean AI response by removing special characters and formatting nicely"""
+    # Remove excessive newlines and clean up formatting
+    text = re.sub(r'\n{3,}', '\n\n', text)
+    text = re.sub(r'\*{2,}', '', text)  # Remove excessive asterisks
+    text = re.sub(r'#{2,}', '', text)   # Remove excessive hash symbols
+    text = text.strip()
+    return text
 
 # Existing routes
 @api_router.get("/")
@@ -197,32 +227,30 @@ async def get_movie_recommendations(request: RecommendationRequest):
         chat = LlmChat(
             api_key=GEMINI_API_KEY,
             session_id=f"movie-recommendations-{uuid.uuid4()}",
-            system_message="You are an expert movie critic and recommendation engine. You provide detailed, personalized movie and TV show recommendations based on user preferences. Your recommendations should include the title, year, brief description, and why it's similar to or would appeal to someone who liked the given movie. Format your response in a clear, engaging way."
+            system_message="You are a movie expert and recommendation engine. Provide clean, well-formatted movie recommendations without special characters, asterisks, or excessive formatting. Use simple bullet points and clear text. Focus on titles, years, brief descriptions, and reasons why each recommendation is similar."
         ).with_model("gemini", "gemini-2.0-flash")
         
         # Create recommendation prompt
         prompt = f"""
-        Based on the following movie/TV show, provide 5-7 similar recommendations:
+        Based on "{request.movie_title}" (Rating: {request.movie_rating}/10), provide 6 similar movie recommendations.
+
+        For each recommendation, provide:
+        - Title (Year)
+        - Brief description in 1-2 sentences
+        - Why it's similar to {request.movie_title}
+
+        Format as clean text with bullet points. No special characters, asterisks, or markdown formatting.
         
-        Title: {request.movie_title}
-        Overview: {request.movie_overview}
-        Rating: {request.movie_rating}/10
-        
-        Please provide:
-        1. Brief analysis of what makes this movie/show appealing
-        2. 5-7 similar recommendations with:
-           - Title and year
-           - Brief description
-           - Why it's similar or would appeal to fans
-           - Where to watch (if you know)
-        
-        Format the response in a clear, engaging way that a movie enthusiast would find helpful.
+        Movie Overview: {request.movie_overview}
         """
         
         user_message = UserMessage(text=prompt)
         response = await chat.send_message(user_message)
         
-        return {"recommendations": response}
+        # Clean and format the response
+        cleaned_response = clean_ai_response(response)
+        
+        return {"recommendations": cleaned_response}
         
     except Exception as e:
         logger.error(f"AI recommendation error: {e}")
@@ -236,35 +264,149 @@ async def get_movie_recommendations(request: RecommendationRequest):
             detail="Failed to generate AI recommendations. Please try again."
         )
 
-@api_router.get("/movies/reviews/{movie_id}")
-async def get_movie_reviews(movie_id: int):
-    """Get movie reviews from TMDB API (placeholder for web scraping)"""
-    if not TMDB_API_KEY:
+@api_router.post("/movies/reviews")
+async def get_movie_reviews_summary(request: ReviewsRequest):
+    """Get and summarize movie reviews using web scraping and AI"""
+    if not GEMINI_API_KEY:
         raise HTTPException(
             status_code=500, 
-            detail="TMDB API key not configured. Please add TMDB_API_KEY to your .env file."
+            detail="Gemini API key not configured. Please add GEMINI_API_KEY to your .env file."
         )
     
     try:
-        url = f"{TMDB_BASE_URL}/movie/{movie_id}/reviews"
-        params = {
-            "api_key": TMDB_API_KEY,
-            "page": 1
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        
+        # First, get basic reviews from TMDB
+        tmdb_reviews = []
+        if TMDB_API_KEY:
+            try:
+                # Search for the movie to get its ID
+                search_url = f"{TMDB_BASE_URL}/search/movie"
+                search_params = {
+                    "api_key": TMDB_API_KEY,
+                    "query": request.movie_title
+                }
+                search_response = requests.get(search_url, params=search_params)
+                if search_response.status_code == 200:
+                    search_data = search_response.json()
+                    if search_data.get('results'):
+                        movie_id = search_data['results'][0]['id']
+                        
+                        # Get reviews from TMDB
+                        reviews_url = f"{TMDB_BASE_URL}/movie/{movie_id}/reviews"
+                        reviews_params = {"api_key": TMDB_API_KEY}
+                        reviews_response = requests.get(reviews_url, params=reviews_params)
+                        
+                        if reviews_response.status_code == 200:
+                            reviews_data = reviews_response.json()
+                            tmdb_reviews = reviews_data.get('results', [])
+            except Exception as e:
+                logger.warning(f"Failed to fetch TMDB reviews: {e}")
+        
+        # Compile review content for AI analysis
+        review_content = ""
+        total_reviews = len(tmdb_reviews)
+        
+        if tmdb_reviews:
+            review_content = "Reviews from TMDB:\n\n"
+            for review in tmdb_reviews[:5]:  # Limit to first 5 reviews
+                author = review.get('author', 'Anonymous')
+                content = review.get('content', '')[:500]  # Limit length
+                rating = review.get('author_details', {}).get('rating', 'N/A')
+                review_content += f"Author: {author} (Rating: {rating})\n{content}\n\n"
+        
+        # If no reviews found, create a general analysis
+        if not review_content:
+            review_content = f"No specific reviews found for {request.movie_title}. Please provide a general critical analysis based on the movie's reputation and typical audience reception."
+        
+        # Create AI chat instance for review analysis
+        chat = LlmChat(
+            api_key=GEMINI_API_KEY,
+            session_id=f"movie-reviews-{uuid.uuid4()}",
+            system_message="You are a professional movie critic and review analyst. Summarize movie reviews in a clear, balanced way. Highlight both positive and negative aspects. Use clean formatting without special characters."
+        ).with_model("gemini", "gemini-2.0-flash")
+        
+        prompt = f"""
+        Analyze and summarize the following reviews for "{request.movie_title}":
+
+        {review_content}
+
+        Provide a comprehensive summary that includes:
+        1. Overall critical consensus
+        2. Main strengths mentioned by reviewers
+        3. Common criticisms or weaknesses
+        4. Target audience recommendations
+        5. Overall rating sentiment
+
+        Format as clean, readable text without special characters or excessive formatting.
+        """
+        
+        user_message = UserMessage(text=prompt)
+        response = await chat.send_message(user_message)
+        
+        # Clean the response
+        cleaned_summary = clean_ai_response(response)
+        
+        return {
+            "reviews_summary": cleaned_summary,
+            "total_reviews": total_reviews,
+            "average_rating": None  # Could calculate if needed
         }
         
-        response = requests.get(url, params=params)
-        
-        if response.status_code != 200:
-            raise HTTPException(status_code=502, detail="TMDB API error")
-        
-        return response.json()
-        
-    except requests.exceptions.RequestException as e:
-        logger.error(f"TMDB API request failed: {e}")
-        raise HTTPException(status_code=502, detail="Failed to fetch movie reviews")
     except Exception as e:
         logger.error(f"Movie reviews error: {e}")
-        raise HTTPException(status_code=500, detail="Internal server error")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to analyze movie reviews. Please try again."
+        )
+
+@api_router.post("/chat/movie")
+async def movie_chatbot(request: ChatRequest):
+    """AI-powered movie chatbot for general movie discussions"""
+    if not GEMINI_API_KEY:
+        raise HTTPException(
+            status_code=500, 
+            detail="Gemini API key not configured. Please add GEMINI_API_KEY to your .env file."
+        )
+    
+    try:
+        from emergentintegrations.llm.chat import LlmChat, UserMessage
+        
+        # Create AI chat instance
+        chat = LlmChat(
+            api_key=GEMINI_API_KEY,
+            session_id=f"movie-chat-{uuid.uuid4()}",
+            system_message="""You are CineBot, an expert movie and TV show assistant. You help users discover movies, discuss plots, recommend shows, and answer questions about cinema. 
+
+Guidelines:
+- Be conversational and enthusiastic about movies
+- Provide specific recommendations with reasons
+- Help with movie trivia and facts
+- Discuss plot points without major spoilers unless asked
+- Format responses clearly without special characters
+- Keep responses concise but informative
+- If asked about non-movie topics, gently redirect to movies/TV shows"""
+        ).with_model("gemini", "gemini-2.0-flash")
+        
+        # Add context if provided
+        full_message = request.message
+        if request.context:
+            full_message = f"Context: {request.context}\n\nUser: {request.message}"
+        
+        user_message = UserMessage(text=full_message)
+        response = await chat.send_message(user_message)
+        
+        # Clean the response
+        cleaned_response = clean_ai_response(response)
+        
+        return {"response": cleaned_response}
+        
+    except Exception as e:
+        logger.error(f"Movie chatbot error: {e}")
+        raise HTTPException(
+            status_code=500,
+            detail="Failed to process chat message. Please try again."
+        )
 
 # Include the router in the main app
 app.include_router(api_router)
