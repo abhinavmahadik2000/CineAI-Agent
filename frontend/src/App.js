@@ -321,7 +321,10 @@ function App() {
       {showRecommendations && (
         <AIRecommendations
           recommendations={recommendations}
-          onClose={() => setShowRecommendations(false)}
+          onClose={() => {
+            setShowRecommendations(false);
+            // Don't clear selectedMovie so user returns to movie detail
+          }}
         />
       )}
     </div>
