@@ -2,6 +2,7 @@ import requests
 import unittest
 import json
 import sys
+import re
 from datetime import datetime
 
 class CineAIBackendTester:
@@ -91,7 +92,7 @@ class CineAIBackendTester:
 
     def test_ai_recommendations(self, movie_title, movie_overview="", movie_rating=8.5):
         """Test the AI recommendations endpoint"""
-        return self.run_test(
+        success, response = self.run_test(
             f"AI Recommendations for '{movie_title}'",
             "POST",
             "api/movies/recommendations",
@@ -100,6 +101,53 @@ class CineAIBackendTester:
                 "movie_title": movie_title,
                 "movie_overview": movie_overview,
                 "movie_rating": movie_rating
+            }
+        )
+        
+        # Check if the response is clean and well-formatted
+        if success and "recommendations" in response:
+            recommendations = response["recommendations"]
+            # Check for excessive special characters or formatting issues
+            has_special_chars = bool(re.search(r'[*#]{2,}', recommendations))
+            has_excessive_newlines = bool(re.search(r'\n{3,}', recommendations))
+            
+            if has_special_chars or has_excessive_newlines:
+                print("❌ Response contains formatting issues:")
+                if has_special_chars:
+                    print("  - Contains excessive special characters (*#)")
+                if has_excessive_newlines:
+                    print("  - Contains excessive newlines")
+                self.test_results[-1]["success"] = False
+                self.tests_passed -= 1
+                return False, response
+            else:
+                print("✅ Response is clean and well-formatted")
+        
+        return success, response
+
+    def test_movie_reviews(self, movie_title, movie_year=""):
+        """Test the movie reviews endpoint"""
+        return self.run_test(
+            f"Movie Reviews for '{movie_title}'",
+            "POST",
+            "api/movies/reviews",
+            200,
+            data={
+                "movie_title": movie_title,
+                "movie_year": movie_year
+            }
+        )
+        
+    def test_movie_chatbot(self, message, context=""):
+        """Test the movie chatbot endpoint"""
+        return self.run_test(
+            f"Movie Chatbot with message: '{message}'",
+            "POST",
+            "api/chat/movie",
+            200,
+            data={
+                "message": message,
+                "context": context
             }
         )
 
@@ -140,12 +188,24 @@ def main():
     # Test trending movies
     tester.test_trending_movies()
     
-    # Test AI recommendations
-    tester.test_ai_recommendations(
+    # Test AI recommendations (clean formatting)
+    success, recommendations_data = tester.test_ai_recommendations(
         "Inception", 
         "A thief who steals corporate secrets through the use of dream-sharing technology is given the inverse task of planting an idea into the mind of a C.E.O.",
         8.8
     )
+    
+    # Test movie reviews functionality
+    tester.test_movie_reviews("The Matrix", "1999")
+    
+    # Test chatbot functionality
+    tester.test_movie_chatbot("What are some good sci-fi movies like The Matrix?")
+    
+    # Test chatbot conversation flow with context
+    success, first_response = tester.test_movie_chatbot("Tell me about Inception")
+    if success and "response" in first_response:
+        context = f"user: Tell me about Inception\nbot: {first_response['response']}"
+        tester.test_movie_chatbot("Who directed it?", context)
     
     # Print summary
     success = tester.print_summary()
