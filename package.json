@@ -1,0 +1,22 @@
+{
+  "name": "cineai-platform",
+  "version": "1.0.0",
+  "description": "AI-powered movie and TV show discovery platform",
+  "main": "server/index.js",
+  "scripts": {
+    "dev": "concurrently \"npm run server:dev\" \"npm run client:dev\"",
+    "server:dev": "cd server && npm run dev",
+    "client:dev": "cd client && npm start",
+    "build": "cd client && npm run build",
+    "start": "cd server && npm start",
+    "install:all": "npm install && cd server && npm install && cd ../client && npm install",
+    "docker:build": "docker build -t cineai-platform .",
+    "docker:run": "docker run -p 3000:3000 -p 5000:5000 cineai-platform"
+  },
+  "keywords": ["movies", "ai", "recommendations", "react", "nodejs"],
+  "author": "CineAI Team",
+  "license": "MIT",
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  }
+}
